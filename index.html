@@ -7307,7 +7307,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     <h2>分则讲解持续更新</h2>
     <p>已完成 10/10 章，重点罪名 107/107（约 100%）。每一章完成后，本文档会自动收录全部内容。</p>
     <a class="btn btn-primary" href="#top">回到顶部</a>
-    <p class="footer-note">由笔记库自动生成 · 2026/8/21 · 单文件离线可用 · 同步引擎 v4.1</p>
+    <p class="footer-note">由笔记库自动生成 · 2026/8/21 · 单文件离线可用 · 同步引擎 v4.2</p>
   </div>
 </footer>
 
@@ -7338,7 +7338,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
 
 <div class="sync-modal" id="sync-modal" hidden role="dialog" aria-modal="true" aria-label="云同步设置">
   <p class="sync-modal-title">云同步设置</p>
-  <p class="sync-modal-sub">同步引擎 v4.1 · 学习数据保存到你的私有 Gist。所有设备填入同一个 Gist ID 和访问令牌即可自动同步；开启后每 1 分钟自动检查一次云端更新，合并时绝不覆盖；网络抖动自动重试；取消打卡与删除批注也会同步到所有设备；右下角「保存」按钮可手动立即上传。</p>
+  <p class="sync-modal-sub">同步引擎 v4.2 · 学习数据保存到你的私有 Gist。所有设备填入同一个 Gist ID 和访问令牌即可自动同步；开启后每 1 分钟自动检查一次云端更新，合并时绝不覆盖；网络抖动自动重试；取消打卡与删除批注也会同步到所有设备；右下角「保存」按钮可手动立即上传。</p>
   <label for="sync-gist">Gist ID</label>
   <input id="sync-gist" type="text" placeholder="例如 1a2b3c4d5e6f7g8h9i0j" autocomplete="off" spellcheck="false">
   <label for="sync-token">访问令牌（GitHub Token，需 gist 权限）</label>
@@ -8274,7 +8274,9 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     return { study: getDone(), notes: getNotes(), updatedAt: Date.now(), device: syncDevice() };
   }
   function noteTime(n) {
-    var m = /^n(\d+)/.exec(n && n.id ? n.id : '');
+    // ID 格式为 n+13位创建时间+随机串；随机串可能以数字开头，
+    // 因此只取前 13 位数字作为创建时间，避免把随机数字吞进时间戳
+    var m = /^n(\d{13})/.exec(n && n.id ? n.id : '');
     return m ? +m[1] : 0;
   }
   function pullSync() {
