@@ -7294,7 +7294,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     <h2>分则讲解持续更新</h2>
     <p>已完成 10/10 章，重点罪名 107/107（约 100%）。每一章完成后，本文档会自动收录全部内容。</p>
     <a class="btn btn-primary" href="#top">回到顶部</a>
-    <p class="footer-note">由笔记库自动生成 · 2026/8/21 · 单文件离线可用 · 同步引擎 v3</p>
+    <p class="footer-note">由笔记库自动生成 · 2026/8/21 · 单文件离线可用 · 同步引擎 v3.1</p>
   </div>
 </footer>
 
@@ -7321,7 +7321,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
 
 <div class="sync-modal" id="sync-modal" hidden role="dialog" aria-modal="true" aria-label="云同步设置">
   <p class="sync-modal-title">云同步设置</p>
-  <p class="sync-modal-sub">同步引擎 v3 · 学习数据保存到你的私有 Gist。所有设备填入同一个 Gist ID 和访问令牌即可自动同步；开启后每 1 分钟自动检查一次云端更新，合并时只增不减、绝不覆盖。</p>
+  <p class="sync-modal-sub">同步引擎 v3.1 · 学习数据保存到你的私有 Gist。所有设备填入同一个 Gist ID 和访问令牌即可自动同步；开启后每 1 分钟自动检查一次云端更新，合并时只增不减、绝不覆盖；网络抖动时自动重试。</p>
   <label for="sync-gist">Gist ID</label>
   <input id="sync-gist" type="text" placeholder="例如 1a2b3c4d5e6f7g8h9i0j" autocomplete="off" spellcheck="false">
   <label for="sync-token">访问令牌（GitHub Token，需 gist 权限）</label>
@@ -8192,6 +8192,21 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     }
     return m;
   }
+  // 网络类失败自动重试（最多 3 次，指数退避），应对网络抖动
+  function syncFetch(fn) {
+    var tries = 0;
+    var run = function () {
+      return fn().catch(function (err) {
+        var m = err && err.message ? String(err.message) : '';
+        var net = /load failed|failed to fetch|network request failed|typeerror|拉取失败（5|推送失败（5/i.test(m);
+        if (!net || tries >= 3) throw err;
+        tries++;
+        setSyncStatus('同步失败，' + (tries * 2) + ' 秒后自动重试（' + tries + '/3）…', 'err');
+        return new Promise(function (r) { setTimeout(r, tries * 2000); }).then(run);
+      });
+    };
+    return run();
+  }
   function syncPayload() {
     return { study: getDone(), notes: getNotes(), updatedAt: Date.now(), device: syncDevice() };
   }
@@ -8277,8 +8292,8 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     if (!syncEnabled() || syncBusy) return Promise.resolve();
     syncBusy = true;
     var payload = syncPayload();
-    return pullSync().then(function (remote) {
-      if (!remote) return pushSync(payload);
+    return syncFetch(pullSync).then(function (remote) {
+      if (!remote) return syncFetch(function () { return pushSync(payload); });
       var localTime = +(localStorage.getItem('lawSyncLocalTime') || 0);
       var localNewer = localTime >= (remote.updatedAt || 0);
       var merged = {
@@ -8288,11 +8303,13 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
       var mergedBody = applyMergedData(merged, remote);
       var remoteBody = JSON.stringify({ study: remote.study || {}, notes: remote.notes || [] });
       if (mergedBody !== remoteBody) {
-        return pushSync({
-          study: merged.study,
-          notes: merged.notes,
-          updatedAt: Date.now(),
-          device: syncDevice()
+        return syncFetch(function () {
+          return pushSync({
+            study: merged.study,
+            notes: merged.notes,
+            updatedAt: Date.now(),
+            device: syncDevice()
+          });
         });
       }
       return Promise.resolve();
