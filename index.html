@@ -7448,6 +7448,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   }
   function saveDone(d) {
     try { localStorage.setItem(STUDY_KEY, JSON.stringify(d)); } catch (e) { /* 存储不可用时仅本次会话有效 */ }
+    try { localStorage.setItem('lawSyncLocalTime', String(Date.now())); } catch (e) {}
     scheduleSyncPush();
   }
   function refreshStudyUI() {
@@ -7533,6 +7534,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   }
   function saveNotes(ns) {
     try { localStorage.setItem(NOTES_KEY, JSON.stringify(ns)); } catch (e) { /* 存储不可用时仅本次会话有效 */ }
+    try { localStorage.setItem('lawSyncLocalTime', String(Date.now())); } catch (e) {}
     scheduleSyncPush();
   }
   var annotBar = document.getElementById('annot-toolbar');
@@ -8317,13 +8319,8 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     if (!syncEnabled() || syncSuppress) return;
     clearTimeout(syncTimer);
     syncTimer = setTimeout(function () {
-      try { localStorage.setItem('lawSyncLocalTime', String(Date.now())); } catch (e) {}
-      setSyncStatus('同步中…');
-      pushSync(syncPayload()).then(function () {
-        setSyncStatus('已同步 ✓（' + syncDevice() + '）', 'ok');
-      }).catch(function (err) {
-        setSyncStatus('同步失败：' + syncErrMsg(err), 'err');
-      });
+      // 先拉取云端再合并推送，确保任何设备都不会用空/旧数据覆盖云端
+      pullAndMerge(false);
     }, 1500);
   }
   var syncModal = document.getElementById('sync-modal');
