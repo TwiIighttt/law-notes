@@ -7320,7 +7320,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
 
 <div class="sync-modal" id="sync-modal" hidden role="dialog" aria-modal="true" aria-label="云同步设置">
   <p class="sync-modal-title">云同步设置</p>
-  <p class="sync-modal-sub">学习数据会保存到你的私有 Gist。所有设备填入同一个 Gist ID 和访问令牌，即可自动同步打卡、复习、高亮与批注。</p>
+  <p class="sync-modal-sub">学习数据会保存到你的私有 Gist。所有设备填入同一个 Gist ID 和访问令牌，即可自动同步打卡、复习、高亮与批注；开启后每 1 分钟自动检查一次云端更新。</p>
   <label for="sync-gist">Gist ID</label>
   <input id="sync-gist" type="text" placeholder="例如 1a2b3c4d5e6f7g8h9i0j" autocomplete="off" spellcheck="false">
   <label for="sync-token">访问令牌（GitHub Token，需 gist 权限）</label>
@@ -8253,44 +8253,63 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     });
     return added;
   }
-  function syncNow() {
-    if (!syncEnabled()) { setSyncStatus('尚未开启云同步'); return Promise.resolve(); }
-    if (syncBusy) return Promise.resolve();
+  function applyMergedData(merged, remote) {
+    var remoteBody = JSON.stringify({ study: (remote && remote.study) || {}, notes: (remote && remote.notes) || [] });
+    var mergedBody = JSON.stringify({ study: merged.study, notes: merged.notes });
+    var localBody = JSON.stringify({ study: getDone(), notes: getNotes() });
+    if (mergedBody !== remoteBody || mergedBody !== localBody) {
+      syncSuppress = true;
+      try { localStorage.setItem('lawSyncLocalTime', String(Date.now())); } catch (e) {}
+      saveDone(merged.study);
+      saveNotes(merged.notes);
+      syncSuppress = false;
+      refreshStudyUI();
+      var added = applyMergedNotes(merged.notes);
+      if (added > 0 || mergedBody !== localBody) renderNotePanel();
+    }
+    return mergedBody;
+  }
+  function pullAndMerge(quiet) {
+    if (!syncEnabled() || syncBusy) return Promise.resolve();
     syncBusy = true;
-    setSyncStatus('正在同步…');
     var payload = syncPayload();
     return pullSync().then(function (remote) {
-      if (!remote) return pushSync(payload).then(function () { return { pushed: true }; });
+      if (!remote) return pushSync(payload);
       var localTime = +(localStorage.getItem('lawSyncLocalTime') || 0);
       var localNewer = localTime >= (remote.updatedAt || 0);
       var merged = {
         study: mergeStudy(payload.study, remote.study || {}, localNewer),
         notes: mergeNotes(payload.notes, remote.notes || [])
       };
+      var mergedBody = applyMergedData(merged, remote);
       var remoteBody = JSON.stringify({ study: remote.study || {}, notes: remote.notes || [] });
-      var mergedBody = JSON.stringify({ study: merged.study, notes: merged.notes });
-      var localBody = JSON.stringify({ study: payload.study, notes: payload.notes });
-      if (mergedBody !== remoteBody || mergedBody !== localBody) {
-        syncSuppress = true;
-        try { localStorage.setItem('lawSyncLocalTime', String(Date.now())); } catch (e) {}
-        saveDone(merged.study);
-        saveNotes(merged.notes);
-        syncSuppress = false;
-        refreshStudyUI();
-        var added = applyMergedNotes(merged.notes);
-        if (added > 0 || mergedBody !== localBody) renderNotePanel();
+      if (mergedBody !== remoteBody) {
+        return pushSync({
+          study: merged.study,
+          notes: merged.notes,
+          updatedAt: Date.now(),
+          device: syncDevice()
+        });
       }
-      return pushSync({
-        study: merged.study,
-        notes: merged.notes,
-        updatedAt: Date.now(),
-        device: syncDevice()
-      }).then(function () { return { pushed: true }; });
+      return Promise.resolve();
     }).then(function () {
-      setSyncStatus('已同步 ✓（' + syncDevice() + '）', 'ok');
+      if (!quiet) setSyncStatus('已同步 ✓（' + syncDevice() + '）', 'ok');
     }).catch(function (err) {
       setSyncStatus('同步失败：' + syncErrMsg(err), 'err');
     }).then(function () { syncBusy = false; });
+  }
+  function syncNow() {
+    if (!syncEnabled()) { setSyncStatus('尚未开启云同步'); return Promise.resolve(); }
+    setSyncStatus('正在同步…');
+    return pullAndMerge(false);
+  }
+  var syncPollTimer = null;
+  function scheduleSyncPoll() {
+    if (syncPollTimer) { clearInterval(syncPollTimer); syncPollTimer = null; }
+    if (syncEnabled()) {
+      // 每 1 分钟静默检查一次云端，有变化自动合并
+      syncPollTimer = setInterval(function () { pullAndMerge(true); }, 60000);
+    }
   }
   function scheduleSyncPush() {
     if (!syncEnabled() || syncSuppress) return;
@@ -8323,6 +8342,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   var syncClear = document.getElementById('sync-clear');
   if (syncClear) syncClear.addEventListener('click', function () {
     syncSettings = null;
+    if (syncPollTimer) { clearInterval(syncPollTimer); syncPollTimer = null; }
     try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
     if (syncGist) syncGist.value = '';
     if (syncToken) syncToken.value = '';
@@ -8336,9 +8356,13 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     syncSettings = { gist: gist, token: token };
     persistSyncSettings();
     syncNow();
+    scheduleSyncPoll();
   });
   loadSyncSettings();
-  if (syncEnabled()) syncNow();
+  if (syncEnabled()) {
+    syncNow();
+    scheduleSyncPoll();
+  }
 
   // 返回顶部
   var toTop = document.getElementById('to-top');
