@@ -229,6 +229,7 @@ mark.search-hl{
 #sync-status{margin:12px 0 0;font-family:var(--font-ui);font-size:12.5px;color:var(--muted);line-height:1.6;min-height:18px}
 #sync-status.ok{color:var(--ok)}
 #sync-status.err{color:#DC2626}
+#sync-local-info{margin:6px 0 0;font-family:var(--font-ui);font-size:12px;color:var(--muted);line-height:1.6}
 @media (prefers-reduced-motion:reduce){
   .search-list.reveal,.search-list.closing{animation:none}
   .search-list .search-item{opacity:1;animation:none!important}
@@ -7331,6 +7332,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     <button id="sync-save" class="sync-primary" type="button">保存并同步</button>
   </div>
   <p id="sync-status" role="status"></p>
+  <p id="sync-local-info"></p>
 </div>
 
 <aside class="note-panel" id="note-panel" aria-label="我的批注">
@@ -8328,11 +8330,21 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   var syncGist = document.getElementById('sync-gist');
   var syncToken = document.getElementById('sync-token');
   var syncStatusEl = document.getElementById('sync-status');
+  var syncLocalInfo = document.getElementById('sync-local-info');
+  function updateSyncLocalInfo() {
+    if (!syncLocalInfo) return;
+    var st = getDone();
+    var doneN = 0, reviewN = 0;
+    for (var k in st) { if (st[k] === 'done') doneN++; else if (st[k] === 'review') reviewN++; }
+    var noteN = getNotes().filter(function (n) { return n.note; }).length;
+    syncLocalInfo.textContent = '本机数据：打卡 ' + doneN + ' 项 · 复习 ' + reviewN + ' 项 · 批注 ' + noteN + ' 条';
+  }
   function openSyncModal() {
     loadSyncSettings();
     if (syncGist) syncGist.value = (syncSettings && syncSettings.gist) || '';
     if (syncToken) syncToken.value = (syncSettings && syncSettings.token) || '';
     setSyncStatus(syncEnabled() ? '已开启，数据保存在私有 Gist' : '尚未开启云同步');
+    updateSyncLocalInfo();
     if (syncModal) syncModal.hidden = false;
   }
   var syncNav = document.getElementById('sync-nav');
