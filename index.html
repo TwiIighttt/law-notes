@@ -554,6 +554,19 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
 }
 .to-top.show{opacity:1;pointer-events:auto}
 .to-top:hover{transform:translateY(-3px)}
+.save-float{
+  position:fixed;right:22px;bottom:84px;z-index:40;min-height:40px;padding:0 15px;
+  border-radius:999px;border:1px solid rgba(255,255,255,.16);
+  background:rgba(30,58,138,.92);color:#fff;display:flex;align-items:center;gap:6px;
+  font-family:var(--font-ui);font-size:13px;font-weight:700;cursor:pointer;
+  opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease,background .2s ease;
+  box-shadow:0 10px 26px rgba(14,28,69,.28);
+}
+.save-float.show{opacity:1;pointer-events:auto}
+.save-float:hover{transform:translateY(-3px)}
+.save-float.syncing{opacity:.75;pointer-events:none}
+.save-float.ok{background:var(--ok)}
+.save-float.err{background:#DC2626}
 
 /* ===== 响应式 ===== */
 @media (max-width:960px){
@@ -7294,10 +7307,14 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     <h2>分则讲解持续更新</h2>
     <p>已完成 10/10 章，重点罪名 107/107（约 100%）。每一章完成后，本文档会自动收录全部内容。</p>
     <a class="btn btn-primary" href="#top">回到顶部</a>
-    <p class="footer-note">由笔记库自动生成 · 2026/8/21 · 单文件离线可用 · 同步引擎 v3.2</p>
+    <p class="footer-note">由笔记库自动生成 · 2026/8/21 · 单文件离线可用 · 同步引擎 v4.1</p>
   </div>
 </footer>
 
+<button class="save-float" id="save-float" type="button" aria-label="手动保存并上传学习数据" title="手动保存并上传到云端（在自动保存之外的手动保险）">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+  <span id="save-float-label">保存</span>
+</button>
 <button class="to-top" id="to-top" aria-label="回到顶部">
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
 </button>
@@ -7321,7 +7338,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
 
 <div class="sync-modal" id="sync-modal" hidden role="dialog" aria-modal="true" aria-label="云同步设置">
   <p class="sync-modal-title">云同步设置</p>
-  <p class="sync-modal-sub">同步引擎 v3.2 · 学习数据保存到你的私有 Gist。所有设备填入同一个 Gist ID 和访问令牌即可自动同步；开启后每 1 分钟自动检查一次云端更新，合并时只增不减、绝不覆盖；网络抖动自动重试；已修复大文件导致的云端读取截断。</p>
+  <p class="sync-modal-sub">同步引擎 v4.1 · 学习数据保存到你的私有 Gist。所有设备填入同一个 Gist ID 和访问令牌即可自动同步；开启后每 1 分钟自动检查一次云端更新，合并时绝不覆盖；网络抖动自动重试；取消打卡与删除批注也会同步到所有设备；右下角「保存」按钮可手动立即上传。</p>
   <label for="sync-gist">Gist ID</label>
   <input id="sync-gist" type="text" placeholder="例如 1a2b3c4d5e6f7g8h9i0j" autocomplete="off" spellcheck="false">
   <label for="sync-token">访问令牌（GitHub Token，需 gist 权限）</label>
@@ -7441,10 +7458,50 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
       if (!st) {
         st = {};
         var old = JSON.parse(localStorage.getItem('lawStudyDone') || '{}');
-        for (var k in old) { if (old[k]) st[k] = 'done'; }
+        for (var k in old) { if (old[k]) st[k] = { v: 'done', t: 0 }; }
       }
+      // 统一为 {v,t} 格式（兼容旧版字符串格式；v:'' 表示已删除的墓碑）
+      Object.keys(st).forEach(function (k) {
+        var cur = st[k];
+        if (cur && typeof cur === 'object' && typeof cur.v === 'string') {
+          if (typeof cur.t !== 'number') cur.t = 0;
+        } else {
+          st[k] = { v: cur ? 'done' : '', t: 0 };
+        }
+      });
       return st || {};
     } catch (e) { return {}; }
+  }
+  function studyVal(x) {
+    if (x && typeof x === 'object' && typeof x.v === 'string') {
+      return { v: x.v, t: typeof x.t === 'number' ? x.t : 0 };
+    }
+    return { v: x ? 'done' : '', t: 0 };
+  }
+  function mergeStudy(localSt, remoteSt) {
+    var out = {};
+    var keys = {};
+    Object.keys(localSt || {}).forEach(function (k) { keys[k] = 1; });
+    Object.keys(remoteSt || {}).forEach(function (k) { keys[k] = 1; });
+    Object.keys(keys).forEach(function (k) {
+      var l = studyVal((localSt || {})[k]);
+      var r = studyVal((remoteSt || {})[k]);
+      // 按最后修改时间取最新；v:'' 即删除墓碑，同样按时间比较
+      out[k] = l.t >= r.t ? l : r;
+    });
+    return out;
+  }
+  function noteModTime(n) {
+    return (n && n.deleted && typeof n.d === 'number') ? n.d : noteTime(n);
+  }
+  function mergeNotes(localNotes, remoteNotes) {
+    var map = {};
+    (localNotes || []).concat(remoteNotes || []).forEach(function (n) {
+      if (!n || !n.id) return;
+      var cur = map[n.id];
+      if (!cur || noteModTime(n) > noteModTime(cur)) map[n.id] = n;
+    });
+    return Object.keys(map).map(function (k) { return map[k]; });
   }
   function saveDone(d) {
     try { localStorage.setItem(STUDY_KEY, JSON.stringify(d)); } catch (e) { /* 存储不可用时仅本次会话有效 */ }
@@ -7454,10 +7511,10 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   function refreshStudyUI() {
     var st = getDone();
     var doneN = 0, reviewN = 0;
-    for (var k in st) { if (st[k] === 'done') doneN++; else if (st[k] === 'review') reviewN++; }
+    for (var k in st) { var kv = st[k] && st[k].v; if (kv === 'done') doneN++; else if (kv === 'review') reviewN++; }
     document.querySelectorAll('[data-key]').forEach(function (el) {
       var k = el.getAttribute('data-key');
-      var s = st[k] || '';
+      var s = st[k] ? st[k].v : '';
       el.classList.toggle('done', s === 'done');
       el.classList.toggle('review', s === 'review');
       if (el.classList.contains('study-btn')) {
@@ -7487,7 +7544,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     if (window.CHAPTER_KEYS) {
       window.CHAPTER_KEYS.forEach(function (keys, ci) {
         var d = 0, r = 0;
-        keys.forEach(function (k) { if (st[k] === 'done') d++; else if (st[k] === 'review') r++; });
+        keys.forEach(function (k) { var kv = st[k] && st[k].v; if (kv === 'done') d++; else if (kv === 'review') r++; });
         var total2 = keys.length || 1;
         var row = document.querySelector('.bar-row[data-cidx="' + ci + '"]');
         if (!row) return;
@@ -7508,7 +7565,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     if (!el) return;
     var k = el.getAttribute('data-key');
     var st = getDone();
-    var cur = st[k] || '';
+    var cur = st[k] ? st[k].v : '';
     var next = '';
     if (el.classList.contains('study-btn')) {
       next = cur === 'done' ? '' : 'done';
@@ -7518,7 +7575,8 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
       // 索引圆点：无 → 打卡 → 需复习 → 无
       next = cur === 'done' ? 'review' : (cur === 'review' ? '' : 'done');
     }
-    if (next) { st[k] = next; } else { delete st[k]; }
+    // 写入带时间戳的状态；next 为空表示删除（墓碑），同步时按最后修改时间判断
+    st[k] = { v: next, t: Date.now() };
     saveDone(st);
     refreshStudyUI();
   });
@@ -7557,7 +7615,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     return getNotes().filter(function (n) { return n.id === id; })[0] || null;
   }
   function noteNumber(n) {
-    var ns = getNotes().filter(function (x) { return x.note; });
+    var ns = getNotes().filter(function (x) { return x.note && !x.deleted; });
     for (var i = 0; i < ns.length; i++) {
       if (ns[i].id === n.id) return i + 1;
     }
@@ -7618,6 +7676,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   }
   function applyNote(n, refreshPanel) {
     if (!n.id) n.id = 'n' + Date.now() + Math.random().toString(36).slice(2, 7);
+    if (n.deleted) return; // 已删除的墓碑不渲染
     var docEl = document.getElementById('doc-' + n.doc);
     if (!docEl) return;
     var body = docEl.querySelector('.doc-body');
@@ -7658,7 +7717,11 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     if (refreshPanel !== false) renderNotePanel();
   }
   function removeNote(id) {
-    var ns = getNotes().filter(function (n) { return n.id !== id; });
+    // 墓碑式删除：保留记录并打上删除标记与时间，便于多设备同步删除
+    var ns = getNotes().map(function (n) {
+      if (n && n.id === id) { n.deleted = true; n.d = Date.now(); }
+      return n;
+    });
     saveNotes(ns);
     var reg = markRegistry[id];
     if (reg && reg.mark && reg.mark.parentNode) {
@@ -7672,7 +7735,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     if (!noteList) return;
     // 批注栏显隐改由 scheduleLines 依据视口内可见批注自动控制；批注全部清空时隐藏
     if (!notesExist()) applyNotesPanel(false);
-    var ns = getNotes().filter(function (n) { return n.note; });
+    var ns = getNotes().filter(function (n) { return n.note && !n.deleted; });
     if (!ns.length) {
       noteList.innerHTML = '<p class="note-empty">暂无批注。<br>选中法条文字后点击"批注"即可添加。</p>';
       scheduleLines();
@@ -7725,7 +7788,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     if (!noteLines) return;
     while (noteLines.firstChild) noteLines.removeChild(noteLines.firstChild);
     if (window.innerWidth <= 1200 || !notePanel || !notePanel.classList.contains('visible')) return;
-    var ns = getNotes().filter(function (n) { return n.note; });
+    var ns = getNotes().filter(function (n) { return n.note && !n.deleted; });
     ns.forEach(function (n) {
       var reg = markRegistry[n.id];
       if (!reg || !reg.mark) return;
@@ -7805,7 +7868,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   var notePopClose = document.getElementById('note-pop-close');
   if (notePopClose) notePopClose.addEventListener('click', function () { if (notePop) notePop.hidden = true; });
   function exportData() {
-    var data = { study: getDone(), notes: getNotes(), exportedAt: new Date().toISOString() };
+    var data = { study: getDone(), notes: getNotes().filter(function (n) { return !n.deleted; }), exportedAt: new Date().toISOString() };
     var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
@@ -8214,28 +8277,6 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     var m = /^n(\d+)/.exec(n && n.id ? n.id : '');
     return m ? +m[1] : 0;
   }
-  function mergeNotes(localNotes, remoteNotes) {
-    var map = {};
-    (localNotes || []).concat(remoteNotes || []).forEach(function (n) {
-      if (!n || !n.id) return;
-      var cur = map[n.id];
-      if (!cur || noteTime(n) > noteTime(cur)) map[n.id] = n;
-    });
-    return Object.keys(map).map(function (k) { return map[k]; });
-  }
-  function mergeStudy(localSt, remoteSt, localNewer) {
-    var out = {};
-    var keys = {};
-    Object.keys(localSt || {}).forEach(function (k) { keys[k] = 1; });
-    Object.keys(remoteSt || {}).forEach(function (k) { keys[k] = 1; });
-    Object.keys(keys).forEach(function (k) {
-      var l = (localSt || {})[k];
-      var r = (remoteSt || {})[k];
-      if (l && r && l !== r) out[k] = localNewer ? l : r;
-      else out[k] = l || r;
-    });
-    return out;
-  }
   function pullSync() {
     return fetch('https://api.github.com/gists/' + encodeURIComponent(syncSettings.gist), {
       headers: { Authorization: 'Bearer ' + syncSettings.token, Accept: 'application/vnd.github+json' }
@@ -8280,11 +8321,24 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     });
   }
   function applyMergedNotes(notes) {
-    var added = 0;
+    var changed = 0;
     notes.forEach(function (n) {
-      if (n && n.id && !markRegistry[n.id]) { applyNote(n, false); added++; }
+      if (!n || !n.id) return;
+      if (n.deleted) {
+        // 其他设备删除的批注：同步移除本地的标注
+        var reg = markRegistry[n.id];
+        if (reg && reg.mark && reg.mark.parentNode) {
+          var orig = reg.mark.firstChild && reg.mark.firstChild.nodeType === 3 ? reg.mark.firstChild.nodeValue : reg.mark.textContent;
+          reg.mark.parentNode.replaceChild(document.createTextNode(orig), reg.mark);
+        }
+        delete markRegistry[n.id];
+        changed++;
+      } else if (!markRegistry[n.id]) {
+        applyNote(n, false);
+        changed++;
+      }
     });
-    return added;
+    return changed;
   }
   function applyMergedData(merged, remote) {
     var remoteBody = JSON.stringify({ study: (remote && remote.study) || {}, notes: (remote && remote.notes) || [] });
@@ -8308,10 +8362,8 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     var payload = syncPayload();
     return syncFetch(pullSync).then(function (remote) {
       if (!remote) return syncFetch(function () { return pushSync(payload); });
-      var localTime = +(localStorage.getItem('lawSyncLocalTime') || 0);
-      var localNewer = localTime >= (remote.updatedAt || 0);
       var merged = {
-        study: mergeStudy(payload.study, remote.study || {}, localNewer),
+        study: mergeStudy(payload.study, remote.study || {}),
         notes: mergeNotes(payload.notes, remote.notes || [])
       };
       var mergedBody = applyMergedData(merged, remote);
@@ -8363,8 +8415,8 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
     if (!syncLocalInfo) return;
     var st = getDone();
     var doneN = 0, reviewN = 0;
-    for (var k in st) { if (st[k] === 'done') doneN++; else if (st[k] === 'review') reviewN++; }
-    var noteN = getNotes().filter(function (n) { return n.note; }).length;
+    for (var k in st) { var kv = st[k] && st[k].v; if (kv === 'done') doneN++; else if (kv === 'review') reviewN++; }
+    var noteN = getNotes().filter(function (n) { return n.note && !n.deleted; }).length;
     syncLocalInfo.textContent = '本机数据：打卡 ' + doneN + ' 项 · 复习 ' + reviewN + ' 项 · 批注 ' + noteN + ' 条';
   }
   function openSyncModal() {
@@ -8416,7 +8468,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   var sideSuppressUntil = 0;
   var notesHideSuppressUntil = 0;
   function notesExist() {
-    try { return (JSON.parse(localStorage.getItem(NOTES_KEY)) || []).length > 0; } catch (e) { return false; }
+    try { return (JSON.parse(localStorage.getItem(NOTES_KEY)) || []).some(function (n) { return !n.deleted; }); } catch (e) { return false; }
   }
   function applySide(show) {
     if (sideShow === show) return;
@@ -8469,6 +8521,7 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   });
   window.addEventListener('scroll', function () {
     toTop.classList.toggle('show', window.scrollY > 700);
+    if (saveFloat) saveFloat.classList.toggle('show', window.scrollY > 700);
     updateSideNav();
   }, { passive: true });
   // 鼠标移到页面最左边界时唤出导航
@@ -8489,6 +8542,27 @@ section.chapter:nth-of-type(odd){background:var(--paper)}
   toTop.addEventListener('click', function () {
     window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
   });
+  // 手动保存：立即拉取云端合并后上传（自动保存之外的保险）
+  var saveFloat = document.getElementById('save-float');
+  var saveFloatLabel = document.getElementById('save-float-label');
+  if (saveFloat) {
+    saveFloat.addEventListener('click', function () {
+      if (saveFloat.classList.contains('syncing')) return;
+      if (!syncEnabled()) { openSyncModal(); return; }
+      saveFloat.classList.add('syncing');
+      syncNow().then(function () {
+        saveFloat.classList.remove('syncing');
+        var st = syncStatusEl ? syncStatusEl.textContent : '';
+        var ok = st.indexOf('失败') === -1;
+        saveFloat.classList.add(ok ? 'ok' : 'err');
+        if (saveFloatLabel) saveFloatLabel.textContent = ok ? '已保存' : '重试';
+        setTimeout(function () {
+          saveFloat.classList.remove('ok', 'err');
+          if (saveFloatLabel) saveFloatLabel.textContent = '保存';
+        }, 1800);
+      });
+    });
+  }
 
   // GSAP 动效（尊重 prefers-reduced-motion）
   if (!reduceMotion && typeof gsap !== 'undefined') {
